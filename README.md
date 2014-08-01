@@ -11,6 +11,6 @@ Requirements:
 Usage:
 
     Edit USERNAME, PASSWORD and SUBREDDIT vars in UpdateWeeklyLinks.py.
-    Run get-wiki-banned.py
+    Run UpdateWeeklyLinks.py
 
 This script is scheduled run shortly after AutoModerator posts a "weekly" post.  The script will run until it finds a "weekly" post, then it updates the /r/books header and exits.
