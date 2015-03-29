@@ -1,47 +1,55 @@
-#!/usr/bin/python3
-#code base stolen from /u/GoldenSights
+#!/usr/bin/python
+# base code stolen from /u/GoldenSights
 import praw
 import time
 import sqlite3
 import re
 import sys
-
-'''USER CONFIGURATION'''
-
-USERNAME = "xxxx"
-#This is the bot's Username. In order to send mail, he must have some amount of Karma.
-PASSWORD = "xxxx"
-#This is the bot's Password.
-USERAGENT = "UpdateWeeklyLinks v1.0 /u/boib"
-#This is a short description of what the bot does. For example "/u/GoldenSights' Newsletter Bot".
-SUBREDDIT = "boibtest"
-#This is the sub or list of subs to scan for new posts. For a single sub, use "sub1". For multiple subreddits, use "sub1+sub2+sub3+..."
-MAXPOSTS = 30
-#This is how many posts you want to retrieve all at once. PRAW can download 100 at a time.
-WAIT = 60*30 # just run twice an hour
-#This is how many seconds you will wait between cycles. The bot is completely inactive during this time.
-'''All done!'''
+import tweepy
+import datetime
 
 
 
-WAITS = str(WAIT)
+confData = {}
+
+f = open('uwl.conf', 'r')
+buf = f.readlines()
+f.close()
+
+
+for b in buf:
+    if b[0] == '#' or len(b) < 5 or ":" not in b:
+        continue
+
+    confData[b[:b.find(":")]] = b[b.find(":")+1:].strip()
+
+
+if not confData['username'] or not confData['password']:
+    print ("Missing param from conf file")
+    quit()
+
+
+
+SUBREDDIT = "books"
+
+
+now=datetime.datetime.now()
+print ("\n============\n"+now.strftime("%Y-%m-%d %H:%M"))
+
+
 sql = sqlite3.connect('UpdateWeeklyLinks.db')
-print('Loaded SQL Database')
 cur = sql.cursor()
 cur.execute('CREATE TABLE IF NOT EXISTS oldposts(id TEXT)')
-print('Loaded Oldposts')
 sql.commit()
 
-
-r = praw.Reddit(USERAGENT)
+r = praw.Reddit("UpdateWeeklyLinks v1.0 /u/" + confData['username'])
 r.config.decode_html_entities = True
 
 
 Trying = True
 while Trying:
     try:
-        r.login(USERNAME, PASSWORD)
-        print('Successfully logged in\n')
+        r.login(confData['username'], confData['password'])
         Trying = False
     except praw.errors.InvalidUserPass:
         print('Wrong Username or Password')
@@ -50,10 +58,32 @@ while Trying:
         print("%s" % e)
         time.sleep(5)
 
+
+
+def doTwitter (msg):
+    try:
+        print ("tweeting...")
+        print (msg)
+
+        if len(msg) > 138:
+            msg = msg[:136] + "..."
+            print ("msg too long")
+            print("new msg: " + msg)
+            print ("new msg len: " + str(len(msg)))
+
+        auth = tweepy.OAuthHandler(confData['twitter_consumer_key'], confData['twitter_consumer_secret'])
+        auth.set_access_token(confData['twitter_access_key'], confData['twitter_access_secret'])
+        api = tweepy.API(auth)
+        api.update_status(msg)
+    except Exception as e:
+        print ("exception doTwitter() %s" % e)
+
+
+
 def scan():
     print('Scanning ' + SUBREDDIT)
-    subreddit = r.get_subreddit(SUBREDDIT)
-    posts = subreddit.get_new(limit=MAXPOSTS)
+    sr = r.get_subreddit(SUBREDDIT)
+    posts = sr.get_new(limit=30)
     for post in posts:
         weeklyRecThread     = False
         weeklyReadingThread = False
@@ -65,13 +95,20 @@ def scan():
 
         if pauthor == "AutoModerator":
             print (pauthor + " " + post.title)
-            if "Weekly Recommendation Thread for the week of" in post.title:
+            if "Weekly Recommendation Thread for the week of".lower() in post.title.lower():
                 weeklyRecThread = True
-                searchx = "\*\*\[Weekly Recommendation Thread,\]\((http://www.reddit.com/r/books/.*?)\)\*\*"
+                searchx = "\[Weekly Recommendation Thread\]\((.*?)\)"
 
-            elif "What books are you reading this week?" in post.title:
+            elif "What books are you reading this week?".lower() in post.title.lower():
                 weeklyReadingThread = True
-                searchx = "\*\*\[Weekly \"What Are You Reading\?\" Thread!\]\((http://www.reddit.com/r/books/.*?)\)\*\*"
+                searchx = "\[Weekly \"What Are You Reading\?\" Thread!\]\((.*?)\)"
+
+            else:
+                if post.link_flair_text.lower() == "weeklythread":
+                    twitText = '%s: Today in /r/books: "%s"' % (post.short_link, post.title)
+                    doTwitter(twitText)
+
+
 
             if weeklyRecThread or weeklyReadingThread:
                 cur.execute('SELECT * FROM oldposts WHERE id=?', [pid])
@@ -88,7 +125,6 @@ def scan():
                     # 5) set flag to not run again until midnight
                     #
 
-                    sr = r.get_subreddit(SUBREDDIT)
                     sb = sr.get_settings()["description"]
 
                     print ("searchx: " + searchx)
@@ -96,22 +132,29 @@ def scan():
 
                     if matchObj:
                        print ("Old url : ", matchObj.group(1))
-                       print ("New url : ", post.url)
+                       print ("New url : ", post.short_link)
 
-                       new_sb = sb.replace(matchObj.group(1), post.url)
+                       new_sb = sb.replace(matchObj.group(1), post.short_link)
                        sr.update_settings(description = new_sb)
-                       quit() # update one string and quit
+
+                       if weeklyReadingThread:
+                           msg = "What are you reading this week? " + post.short_link
+                       elif weeklyRecThread:
+                           msg = "Looking for good book recommendations? " + post.short_link
+                       doTwitter(msg)
 
                     else:
                        print ("No match!!")
                 else:
                     print("Already in db - no action")
-while True:
-    try:
-        scan()
-    except Exception as e:
-        print('An error has occured:', e)
-    print('Running again in ' + WAITS + ' seconds.\n')
-    time.sleep(WAIT)
+
+
+
+try:
+    scan()
+except Exception as e:
+    print('An error has occured:', e)
+print ("Finished")
+
 
 
